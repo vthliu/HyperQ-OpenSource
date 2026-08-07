@@ -1,0 +1,82 @@
+[binance]
+# ==========================================
+# Binance Futures API Keys
+# DO NOT COMMIT YOUR REAL KEYS TO GITHUB!
+# ==========================================
+api_key = "YOUR_BINANCE_API_KEY_HERE"
+api_secret = "YOUR_BINANCE_API_SECRET_HERE"
+
+# Use fapi.binance.com for mainnet, testnet.binancefuture.com for testnet
+base_url = "https://fapi.binance.com"
+ws_url = "wss://fstream.binance.com"
+
+[risk_guard]
+# Acceleration thresholds for different asset tiers
+layer1_accel_base = -0.16
+layer2_accel_base = -0.20
+layer3_accel_base = -0.12
+
+base_velocity_threshold = -0.10
+zscore_multiplier = 3.0
+vwap_recover_threshold = 0.02
+alert_grace_cycles = 1
+
+[sentinel]
+# The sentinel checks all positions every N milliseconds
+check_interval_ms = 500
+# Hard stop loss (Max allowed loss: -20% ROE)
+hard_stop_roe = -0.20
+stale_data_timeout_ms = 2000
+closing_timeout_ms = 5000
+funding_rate_exit_threshold = 0.015
+funding_rate_open_threshold = 0.010
+min_signal_prob_for_high_funding = 0.98
+
+[time_stop]
+# Maximum holding time before cutting positions that don't trend (hours)
+layer1_max_holding_hours = 2.0
+layer2_max_holding_hours = 1.5
+layer3_max_holding_hours = 1.0
+
+[prob_threshold]
+# The minimum ML probability required to open a position
+layer1_min_prob = 0.62
+layer2_min_prob = 0.65
+layer3_min_prob = 0.70
+
+[defense_mode]
+# In defensive mode, leverage and stops can be dynamically reduced
+enabled = true
+leverage_multiplier = 0.5
+hard_stop_multiplier = 0.8
+
+[position]
+# Max concurrent positions
+max_positions = 5
+max_leverage = 5
+rwa_risk_multiplier = 0.3
+
+[position.dynamic_sizing]
+enabled = true
+min_alloc_pct = 0.15
+max_alloc_pct = 0.20
+
+[asset_tiers]
+# ==========================================
+# Symbol Registry (Asset Pools)
+# ==========================================
+layer1 = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT"]
+layer2 = ["AVAXUSDT", "DOTUSDT", "DOGEUSDT"]
+layer3 = ["ONDOUSDT", "CFGUSDT", "MPLUSDT"]
+
+[executor]
+limit_order_timeout_secs = 10
+order_retry_attempts = 3
+market_order_slippage_tolerance = 0.005
+
+[metrics]
+enabled = true
+port = 9091
+
+[logging]
+level = "info"

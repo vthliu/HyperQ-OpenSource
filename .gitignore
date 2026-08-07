@@ -1,0 +1,27 @@
+# Compiled output
+target/
+
+# Python
+__pycache__/
+*.pyc
+venv/
+
+# Environment and Secrets
+.env
+config.toml
+keys/
+models/
+
+# Logs and tracking databases
+*.log
+*.jsonl
+*.sqlite
+*.db
+tracking.db
+
+# Test vectors and data
+test_vectors.json
+backtest_logs.txt
+
+# OS Generated
+.DS_Store
