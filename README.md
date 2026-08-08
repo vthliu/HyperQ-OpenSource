@@ -6,9 +6,9 @@ HyperQ is a high-frequency, institutional-grade execution engine for cryptocurre
 
 ## 🚀 Key Features
 
-- **0.1s Real-time Trailing Stop**: The `RiskGuard V2` module in Rust iterates through memory-mapped WebSocket data every 100 milliseconds, ensuring profits are locked in instantly without API latency.
-- **Strict -20% ROE Hard Stop (Sentinel)**: The `Sentinel` thread acts as a circuit breaker, clamping maximum losses dynamically. It prevents cascading liquidations by brutally cutting losses exactly at the predefined mathematical boundary.
-- **Multi-Timeframe (MTF) Momentum**: The Python AI inference server analyzes 4H, 1H, and 15m order flow (OFI) concurrently.
+- **0.1s Real-time Trailing Stop & L3 CVD Risk Guard (V5.2)**: The `RiskGuard V2` module in Rust iterates through memory-mapped WebSocket data every 100 milliseconds, ensuring profits are locked in instantly. It also uses L3 `@aggTrade` CVD (Cumulative Volume Delta) to detect whale dumping, triggering preemptive stop-loss instantly.
+- **-5% ROE Preemptive CVD Cut & -20% Hard Stop**: The `Sentinel` thread acts as a circuit breaker, clamping maximum losses dynamically. If ROE hits -5% and CVD shows extreme divergence, it cuts instantly. A -20% mathematical boundary remains as the absolute hard stop.
+- **Pure 15m Momentum (Zero Network IO)**: Upgraded to 'Assassin Mode', the Python AI inference server analyzes pure 15m order flow (OFI) momentum, completely eliminating 4H/1H REST API network delay.
 - **Nuclear Momentum Override**: In cases of extreme liquidations or massive whale activity, the system ignores macro trends and overrides standard rules to capture V-shaped reversals.
 
 ## 🛠️ Architecture
@@ -43,9 +43,9 @@ HyperQ 是一套专为加密货币永续合约打造的工业级量化执行引�
 
 ## 🚀 核心卖点
 
-- **0.1秒极速追踪止盈**：底层的 `RiskGuard V2` 模块每 100 毫秒扫描一次内存中的 WebSocket 订单流。一旦触发止盈，瞬间市价斩仓，彻底杜绝“利润回吐”。
-- **-20% ROE 铁血防线 (Sentinel)**：哨兵微线程作为物理级熔断器，无论行情如何插针，强制把单笔最大亏损死死锁在数学极限内。
-- **多周期动能共振 (MTF)**：Python 端并发处理 4H、1H 宏观大势与 15m 微观订单流失衡 (OFI)。
+- **0.1秒极速追踪止盈 & L3 CVD 风控 (V5.2)**：底层的 `RiskGuard V2` 模块每 100 毫秒扫描一次内存中的 WebSocket 订单流。结合 L3 `@aggTrade` 的真实买卖差 (CVD)，一旦发现主力砸盘，瞬间市价抢跑逃命。
+- **-5% CVD 预判斩仓 & -20% 铁血防线**：哨兵微线程作为物理级熔断器。当浮亏达 -5% 且 CVD 出现断崖式背离时，直接无情斩仓；而 -20% 则是无论如何也会触发的最终数学熔断边界。
+- **纯 15m 极速动能 (零网络 IO 延迟)**：升级为“刺客模式”，砍掉 4H/1H 大周期 REST API 请求，Python 端专注于纯粹的 15m 微观订单流失衡 (OFI) 爆发，实现毫秒级“零等待”信号生成。
 - **动能穿透特权 (Nuclear Override)**：在全网爆仓踩踏或巨鲸暴力扫盘时，系统会无视宏观趋势，发动特权级买入，捕捉深V反转。
 
 ## ⚠️ 知识产权与防 Alpha 衰减声明
