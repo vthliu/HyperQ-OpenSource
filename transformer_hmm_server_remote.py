@@ -67,14 +67,11 @@ class MTFEngine:
             raw_prob_long -= 0.40 # 强行穿透，极大增加看空胜率
             is_override = True
         else:
-        else:
-            # 刺客法则：单周期极速动能爆发
             if micro_ret > 0.01 and ofi > 0.3:
-                raw_prob_long += 0.20 # 15m 动能强劲
+                raw_prob_long += 0.20
             elif micro_ret < -0.01 and ofi < -0.3:
                 raw_prob_long -= 0.20
             else:
-                # 震荡市，极度压制概率
                 raw_prob_long = 0.5 + (raw_prob_long - 0.5) * 0.5
 
         raw_prob_long = max(0.01, min(0.99, raw_prob_long))
