@@ -258,10 +258,10 @@ impl Executor {
                     }
                 }
                 
-                // Fallback / Completion with MARKET (plain, no ReduceOnly to avoid -2022)
+                // Fallback / Completion with MARKET (must use ReduceOnly to avoid reversing position if local state is stale)
                 if remaining_qty > abs_qty * 0.001 {
                     info!("🚀 [TAKER CLOSE FALLBACK] Executing MARKET close for {} Qty: {}", symbol, remaining_qty);
-                    match self.ws.place_order(&symbol, side, "MARKET", remaining_qty, None, false).await {
+                    match self.ws.place_order(&symbol, side, "MARKET", remaining_qty, None, true).await {
                         Ok(resp) => {
                             let market_avg_price = resp.get("avgPrice")
                                 .and_then(|v| v.as_str())
