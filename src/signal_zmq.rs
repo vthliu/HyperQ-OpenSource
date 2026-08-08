@@ -77,7 +77,7 @@ fn parse_signal(text: &str) -> Option<Signal> {
     
     let mut tier = None;
     let mut is_new_symbol = None;
-    let mut regime = None;
+    let regime;
     
     // New payload: msg_id|timestamp|symbol|price|atr_24h|is_long|raw_score|prob|features|tier|is_new_symbol|regime
     if parts.len() >= 11 {

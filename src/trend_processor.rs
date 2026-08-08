@@ -13,6 +13,7 @@ pub struct TrendProcessor {
     pub rx: Receiver<Signal>,
     positions: Arc<DashMap<String, MockPosition>>,
     executor: Arc<Executor>,
+    ticker_map: Arc<DashMap<String, crate::models::TickerData>>,
     max_positions: usize,
     rwa_risk_multiplier: f64,
     leverage: f64,
@@ -20,7 +21,6 @@ pub struct TrendProcessor {
     prob_threshold: crate::config::ProbThresholdConfig,
     defense_config: crate::config::DefenseConfig,
     dynamic_sizing: crate::config::DynamicSizingConfig,
-    penalty_map: Arc<DashMap<String, (f64, u64)>>,
 }
 
 impl TrendProcessor {
@@ -28,6 +28,7 @@ impl TrendProcessor {
         rx: Receiver<Signal>,
         positions: Arc<DashMap<String, MockPosition>>,
         executor: Arc<Executor>,
+        ticker_map: Arc<DashMap<String, crate::models::TickerData>>,
         max_positions: usize,
         rwa_risk_multiplier: f64,
         leverage: f64,
@@ -35,12 +36,12 @@ impl TrendProcessor {
         prob_threshold: crate::config::ProbThresholdConfig,
         defense_config: crate::config::DefenseConfig,
         dynamic_sizing: crate::config::DynamicSizingConfig,
-        penalty_map: Arc<DashMap<String, (f64, u64)>>,
     ) -> Self {
         Self {
             rx,
             positions,
             executor,
+            ticker_map,
             max_positions,
             rwa_risk_multiplier,
             leverage,
@@ -48,7 +49,6 @@ impl TrendProcessor {
             prob_threshold,
             defense_config,
             dynamic_sizing,
-            penalty_map,
         }
     }
 
@@ -61,7 +61,7 @@ impl TrendProcessor {
     }
 
     pub async fn process_signal(&self, signal: Signal) {
-        let mut target_threshold = match signal.tier.as_deref() {
+        let target_threshold = match signal.tier.as_deref() {
             Some("layer1") => self.prob_threshold.layer1,
             Some("layer2") => self.prob_threshold.layer2,
             Some("layer3") => self.prob_threshold.layer3,
@@ -111,12 +111,39 @@ impl TrendProcessor {
             return;
         }
 
-        if signal.prob < target_threshold {
-            warn!("Signal prob {} for {} is below its tier threshold {}. Ignoring.", signal.prob, signal.symbol, target_threshold);
+        let mut final_prob = signal.prob;
+        let mut final_is_long = signal.is_long;
+        let mut is_momentum = false;
+
+        // --- Regime Classifier & Momentum Override ---
+        if let Some(ticker) = self.ticker_map.get(&signal.symbol) {
+            let pct = ticker.price_change_pct;
+            let high_24h = ticker.high_24h;
+            let low_24h = ticker.low_24h;
+            let current_price = signal.price;
+
+            let is_breaking_high = current_price >= high_24h * 0.995; // Within 0.5% of 24h High
+            let is_breaking_low = current_price <= low_24h * 1.005;   // Within 0.5% of 24h Low
+
+            if pct > 20.0 && !signal.is_long && is_breaking_high {
+                warn!("🚨 [REGIME OVERRIDE] {} is in STRONG_TREND UP (+{:.1}%) and BREAKING HIGH! VETOING AI SHORT. Forcing Momentum LONG!", signal.symbol, pct);
+                final_prob = 1.0;
+                final_is_long = true;
+                is_momentum = true;
+            } else if pct < -20.0 && signal.is_long && is_breaking_low {
+                warn!("🚨 [REGIME OVERRIDE] {} is in STRONG_TREND DOWN ({:.1}%) and BREAKING LOW! VETOING AI LONG. Forcing Momentum SHORT!", signal.symbol, pct);
+                final_prob = 1.0;
+                final_is_long = false;
+                is_momentum = true;
+            }
+        }
+
+        if final_prob < target_threshold {
+            warn!("Signal prob {} for {} is below its tier threshold {}. Ignoring.", final_prob, signal.symbol, target_threshold);
             return;
         }
 
-        info!("Received strong signal for {} (Prob: {} >= {}). Executing...", signal.symbol, signal.prob, target_threshold);
+        info!("Received strong signal for {} (Prob: {} >= {}). Executing...", signal.symbol, final_prob, target_threshold);
         
         // Defense Mode Leverage Check
         let mut target_leverage = self.leverage;
@@ -168,23 +195,23 @@ impl TrendProcessor {
                 info!("Layer 3 Asset detected! Applying RWA risk multiplier. Qty: {}", final_qty);
             }
         }
-        
-        // Execute the top signal
-        let order = OrderType::MarketOpen {
+        let target_qty = (target_notional / signal.price) * final_prob;
+
+        let open_order = OrderType::MarketOpen {
             symbol: signal.symbol.clone(),
-            is_long: signal.is_long,
-            qty: final_qty, // Adjusted for RWA
+            is_long: final_is_long,
+            qty: target_qty,
             expected_price: signal.price,
             tier: signal.tier.clone(),
             regime: signal.regime.clone(),
             atr_24h: signal.atr_24h,
+            is_momentum_trade: is_momentum,
         };
         
         if self.dry_run {
             warn!("🧪 [DRY-RUN] 模拟开仓: {}, 概率 {}%, Qty: {}", signal.symbol, signal.prob * 100.0, final_qty);
             return;
         }
-
-        self.executor.execute_order(order).await;
+        self.executor.execute_order(open_order).await;
     }
 }

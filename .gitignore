@@ -25,3 +25,4 @@ backtest_logs.txt
 
 # OS Generated
 .DS_Store
+deploy_aws.sh

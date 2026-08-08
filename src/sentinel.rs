@@ -14,12 +14,11 @@ pub struct Sentinel {
     config: crate::config::SentinelConfig,
     dry_run: bool,
     time_stop: crate::config::TimeStopConfig,
-    penalty_map: Arc<DashMap<String, (f64, u64)>>,
 }
 
 impl Sentinel {
-    pub fn new(positions: Arc<DashMap<String, MockPosition>>, executor: Arc<Executor>, funding_map: Arc<DashMap<String, (f64, u64)>>, config: crate::config::SentinelConfig, dry_run: bool, time_stop: crate::config::TimeStopConfig, penalty_map: Arc<DashMap<String, (f64, u64)>>) -> Self {
-        Self { positions, executor, funding_map, config, dry_run, time_stop, penalty_map }
+    pub fn new(positions: Arc<DashMap<String, MockPosition>>, executor: Arc<Executor>, funding_map: Arc<DashMap<String, (f64, u64)>>, config: crate::config::SentinelConfig, dry_run: bool, time_stop: crate::config::TimeStopConfig) -> Self {
+        Self { positions, executor, funding_map, config, dry_run, time_stop }
     }
 
     pub fn start(self: Arc<Self>) {
@@ -72,7 +71,7 @@ impl Sentinel {
                 25.0 // Fallback for medium term strategy
             };
             
-            let mut current_hard_stop = -atr_roe_drop.clamp(10.0, 20.0); // 中长线极速止损 (最大允许亏损 20% ROE)
+            let mut current_hard_stop = -atr_roe_drop.clamp(7.0, 12.0); // 中长线极速止损 (最大允许亏损 12% ROE)
 
             if let Some(reg) = &pos.regime {
                 if current_time % 60_000 < 500 { // Roughly every minute
@@ -80,7 +79,7 @@ impl Sentinel {
                 }
                 
                 if reg == "CHOP_HIGH_VOL" {
-                    current_hard_stop *= 0.8; // Tighten stop in choppy regime
+                    current_hard_stop *= 0.7; // Tighten stop more aggressively in choppy regime
                 }
             }
             

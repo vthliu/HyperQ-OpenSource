@@ -1,0 +1,10 @@
+[Unit]
+Description=HyperQ Optimizer Timer (Weekly)
+Requires=hyperq-optimizer.service
+
+[Timer]
+OnCalendar=Sun *-*-* 02:00:00
+Unit=hyperq-optimizer.service
+
+[Install]
+WantedBy=timers.target

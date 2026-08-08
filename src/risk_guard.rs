@@ -10,14 +10,14 @@ use crate::executor::{Executor, OrderType};
 pub struct RiskGuard {
     positions: Arc<DashMap<String, MockPosition>>,
     executor: Arc<Executor>,
-    price_map: Arc<DashMap<String, (f64, u64)>>,
+    price_map: Arc<DashMap<String, (f64, f64, u64)>>,
     config: crate::config::RiskGuardConfig,
     asset_tiers: crate::config::AssetTiersConfig,
     cvd_map: Arc<DashMap<String, f64>>,
 }
 
 impl RiskGuard {
-    pub fn new(positions: Arc<DashMap<String, MockPosition>>, executor: Arc<Executor>, price_map: Arc<DashMap<String, (f64, u64)>>, config: crate::config::RiskGuardConfig, asset_tiers: crate::config::AssetTiersConfig, cvd_map: Arc<DashMap<String, f64>>) -> Self {
+    pub fn new(positions: Arc<DashMap<String, MockPosition>>, executor: Arc<Executor>, price_map: Arc<DashMap<String, (f64, f64, u64)>>, config: crate::config::RiskGuardConfig, asset_tiers: crate::config::AssetTiersConfig, cvd_map: Arc<DashMap<String, f64>>) -> Self {
         Self { positions, executor, price_map, config, asset_tiers, cvd_map }
     }
 
@@ -31,7 +31,7 @@ impl RiskGuard {
             let pos = entry.value_mut();
 
             let price = if let Some(p) = self.price_map.get(&symbol) {
-                p.0
+                (p.0 + p.1) / 2.0
             } else {
                 continue; // No price yet — skip rather than using stale entry_price
             };
@@ -49,6 +49,20 @@ impl RiskGuard {
 
             let cvd = self.cvd_map.get(&symbol).map(|v| *v).unwrap_or(0.0);
             
+            // Phase -1: Hard Stop Loss
+            if roe < -12.0 {
+                warn!("💀 [HARD STOP] 无条件硬止损触发 for {}! ROE={:.2}%", symbol, roe);
+                if pos.try_lock_for_close() {
+                    orders_to_execute.push(OrderType::MarketClose {
+                        symbol: symbol.clone(),
+                        qty: pos.position_amt,
+                        expected_price: price,
+                        reason: format!("Hard Stop Loss (ROE={:.2}%)", roe)
+                    });
+                }
+                continue;
+            }
+
             // Phase 0: CVD (L3 AggTrade) 微观预判止损 (Assassin Mode)
             // 如果浮亏大于 -5%，且微观吃单动量 (CVD) 严重背离，立刻斩仓，不等 -20%
             if roe < -5.0 {
@@ -70,9 +84,46 @@ impl RiskGuard {
                 }
             }
 
+            // Phase M: Momentum Trade Wide Trailing Stop
+            if pos.is_momentum_trade {
+                let peak = pos.max_favorable_excursion;
+                // Give it extreme breathing room: -15% absolute dropdown from peak
+                // The hard stop at -12% earlier will catch the initial failure.
+                if peak > 10.0 {
+                    let drawdown = peak - roe;
+                    if drawdown > 15.0 {
+                        warn!("🌊 [MOMENTUM EXIT] 主升浪结束！趋势单平仓 for {}! MFE={:.2}%, Drawdown={:.2}%", symbol, peak, drawdown);
+                        if pos.try_lock_for_close() {
+                            orders_to_execute.push(OrderType::MarketClose {
+                                symbol: symbol.clone(),
+                                qty: pos.position_amt,
+                                expected_price: price,
+                                reason: format!("Momentum Trail Cut (Drawdown={:.1}%)", drawdown)
+                            });
+                        }
+                    }
+                }
+                continue; // Skip the rest of Mean-Reversion RiskGuard logic
+            }
+
+            // Phase 0.5: 保本平仓 (Breakeven Stop)
+            // 如果历史最高浮盈突破过 8%，则绝对不允许这单亏钱，回撤到 +1.5% 直接保本出局
+            if pos.max_favorable_excursion > 8.0 && roe < 1.5 && !pos.alert_flag {
+                warn!("🛡️ [BREAKEVEN] 保本平仓触发 for {}! MFE={:.2}%, Current ROE={:.2}%", symbol, pos.max_favorable_excursion, roe);
+                if pos.try_lock_for_close() {
+                    orders_to_execute.push(OrderType::MarketClose {
+                        symbol: symbol.clone(),
+                        qty: pos.position_amt,
+                        expected_price: price,
+                        reason: "Breakeven Stop (MFE>8%, Now<1.5%)".to_string()
+                    });
+                }
+                continue;
+            }
+
             // Phase 1: 用 MFE（真实最高浮盈）来激活追踪止盈
-            // 中长线策略：MFE 必须达到 15% ROE 才激活，避免正常震荡被早早止出
-            if pos.max_favorable_excursion > 15.0 && !pos.alert_flag {
+            // 中长线策略：MFE 必须达到 10% ROE 才激活，避免利润被反噬
+            if pos.max_favorable_excursion > 10.0 && !pos.alert_flag {
                 pos.alert_flag = true;
                 warn!("🟡 [RISK GUARD] 追踪止盈激活 (Trailing Stop) for {} — MFE={:.2}%", symbol, pos.max_favorable_excursion);
             }
@@ -85,9 +136,11 @@ impl RiskGuard {
                 let mut trigger_stop = false;
                 
                 let stop_level = if peak < 20.0 {
-                    peak * 0.5 // 保本区：回撤超过峰值的50%触发
+                    peak * 0.60 // 阶段 A (10-20% ROE): 允许 40% 回撤，保留 60% 利润
+                } else if peak < 40.0 {
+                    peak * 0.75 // 阶段 B (20-40% ROE): 允许 25% 回撤，保留 75% 利润
                 } else {
-                    peak * 0.65 // 主升浪区：保留峰值的65%利润
+                    peak * 0.85 // 阶段 C (>40% ROE): 允许 15% 回撤，保留 85% 利润
                 };
 
                 if current < stop_level {
@@ -118,14 +171,14 @@ impl RiskGuard {
     pub async fn run_macro_cycle(&self) {
         info!("Running RiskGuard V2 Macro Cycle...");
         
-        let mut orders_to_execute = Vec::new();
+        let orders_to_execute = Vec::new();
         
         for mut entry in self.positions.iter_mut() {
             let symbol = entry.key().clone();
             let pos = entry.value_mut();
 
             let price = if let Some(p) = self.price_map.get(&symbol) {
-                p.0
+                (p.0 + p.1) / 2.0
             } else {
                 pos.entry_price
             };

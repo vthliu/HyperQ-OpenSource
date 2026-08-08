@@ -3,7 +3,6 @@ use dashmap::DashMap;
 use futures::{StreamExt, SinkExt};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tracing::{info, warn, error};
-use serde_json::Value;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -41,19 +40,17 @@ struct AggTradeData {
 
 pub struct BinanceWs {
     ws_url: String,
-    price_map: Arc<DashMap<String, (f64, u64)>>,
-    ofi_map: Arc<DashMap<String, f64>>, // Order Flow Imbalance Map
-    last_log_time: std::sync::atomic::AtomicU64,
+    price_map: Arc<DashMap<String, (f64, f64, u64)>>,
 }
 
 impl BinanceWs {
-    pub fn new(env: &str, price_map: Arc<DashMap<String, (f64, u64)>>, ofi_map: Arc<DashMap<String, f64>>) -> Self {
+    pub fn new(env: &str, price_map: Arc<DashMap<String, (f64, f64, u64)>>) -> Self {
         let ws_url = if env == "mainnet" {
             "wss://fstream.binance.com/ws".to_string()
         } else {
             "wss://stream.binancefuture.com/ws".to_string()
         };
-        Self { ws_url, price_map, ofi_map, last_log_time: std::sync::atomic::AtomicU64::new(0) }
+        Self { ws_url, price_map }
     }
 
     pub async fn start(&self) {
@@ -113,11 +110,10 @@ impl BinanceWs {
     fn handle_message(&self, text: &str) {
         if let Ok(msg) = serde_json::from_str::<BookTickerMsg>(text) {
             if let (Ok(bid), Ok(ask)) = (msg.b.parse::<f64>(), msg.a.parse::<f64>()) {
-                let price = (bid + ask) / 2.0;
                 let ts = msg.e.unwrap_or_else(|| {
                     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64
                 });
-                self.price_map.insert(msg.s, (price, ts));
+                self.price_map.insert(msg.s, (bid, ask, ts));
             }
         }
     }
@@ -323,6 +319,72 @@ impl BinanceWsForceOrder {
                 
                 self.liq_map.insert(sym, (current_long_liq, current_short_liq));
             }
+        }
+    }
+}
+
+#[derive(Deserialize, Debug)]
+pub struct TickerMsg {
+    pub s: String,
+    pub P: String, // Price change percent
+    pub h: String, // High price 24h
+    pub l: String, // Low price 24h
+    pub v: String, // Volume 24h
+}
+
+pub struct BinanceWsTicker {
+    ws_url: String,
+    pub ticker_map: Arc<DashMap<String, crate::models::TickerData>>,
+}
+
+impl BinanceWsTicker {
+    pub fn new(env: &str, ticker_map: Arc<DashMap<String, crate::models::TickerData>>) -> Self {
+        let ws_url = if env == "mainnet" {
+            "wss://fstream.binance.com/ws/!ticker@arr".to_string()
+        } else {
+            "wss://stream.binancefuture.com/ws/!ticker@arr".to_string()
+        };
+        Self { ws_url, ticker_map }
+    }
+
+    pub async fn start(&self) {
+        loop {
+            info!("🔗 Connecting to Ticker WS: {}", self.ws_url);
+            match connect_async(&self.ws_url).await {
+                Ok((mut ws_stream, _)) => {
+                    info!("✅ Connected to Ticker WS (!ticker@arr)!");
+                    loop {
+                        match tokio::time::timeout(std::time::Duration::from_secs(30), ws_stream.next()).await {
+                            Ok(Some(msg)) => {
+                                if let Ok(Message::Text(text)) = msg {
+                                    if let Ok(tickers) = serde_json::from_str::<Vec<TickerMsg>>(&text) {
+                                        for t in tickers {
+                                            if let (Ok(pct), Ok(high), Ok(low), Ok(vol)) = (
+                                                t.P.parse::<f64>(),
+                                                t.h.parse::<f64>(),
+                                                t.l.parse::<f64>(),
+                                                t.v.parse::<f64>(),
+                                            ) {
+                                                self.ticker_map.insert(t.s, crate::models::TickerData {
+                                                    price_change_pct: pct,
+                                                    high_24h: high,
+                                                    low_24h: low,
+                                                    volume_24h: vol,
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Ok(None) => break,
+                            Err(_) => break, // Timeout
+                        }
+                    }
+                }
+                Err(e) => error!("Failed to connect to Ticker WS: {}", e),
+            }
+            warn!("Ticker WS disconnected. Reconnecting in 2 seconds...");
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
     }
 }

@@ -1,0 +1,27 @@
+{
+    "deployment_id": "20260726_084706",
+    "candidate_rank": 1,
+    "params": {
+        "rwa_risk_multiplier": 0.4586785902339491,
+        "max_holding_hours": 1.1087972700162243,
+        "time_stop_profit_threshold": 0.05689671962753543,
+        "hard_stop_roe": -0.2952430657849327,
+        "prob_threshold_layer1": 0.6310891445322692,
+        "prob_threshold_layer2": 0.6982294615252669,
+        "prob_threshold_layer3": 0.7433552124552588
+    },
+    "validation_results": {
+        "sharpe_old": 0,
+        "sharpe_new": 0,
+        "calmar_old": 0,
+        "calmar_new": 0,
+        "rolling_window_sharpes": [
+            0,
+            0,
+            0
+        ],
+        "validation_passed": true
+    },
+    "deployment_timestamp": "2026-07-26T08:47:06.876908",
+    "rollback_triggered": false
+}

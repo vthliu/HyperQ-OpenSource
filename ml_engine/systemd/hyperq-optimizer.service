@@ -1,0 +1,18 @@
+[Unit]
+Description=HyperQ Auto Optimizer
+After=network.target hyperq-ml.service
+
+[Service]
+Type=oneshot
+User=vth
+WorkingDirectory=/home/vth/Vth/ml_engine
+Environment="PATH=/home/vth/Vth/ml_engine/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/home/vth/Vth/ml_engine/venv/bin/python3 -m optimization.auto_optimizer
+ExecStartPost=/home/vth/Vth/ml_engine/venv/bin/python3 -m optimization.validator
+ExecStartPost=/home/vth/Vth/ml_engine/venv/bin/python3 -m optimization.deployer
+ExecStartPost=/usr/bin/systemctl start hyperq-rollback-monitor.service
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+xgboost>=2.0.0
+pandas>=2.0.0
+numpy>=1.24.0
+ccxt>=4.1.0
+pandas-ta>=0.3.14b0
+pyzmq>=25.1.0
+pyarrow>=14.0.0
+scikit-learn>=1.3.0
+pyyaml>=6.0
+pytz==2024.1

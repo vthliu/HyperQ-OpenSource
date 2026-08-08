@@ -14,6 +14,14 @@ pub struct Kline {
     pub taker_buy_quote: f64,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct TickerData {
+    pub price_change_pct: f64,
+    pub high_24h: f64,
+    pub low_24h: f64,
+    pub volume_24h: f64,
+}
+
 #[derive(Debug)]
 pub struct MockPosition {
     pub symbol: String,
@@ -33,6 +41,7 @@ pub struct MockPosition {
     pub alert_flag: bool,
     pub peak_ema_roe: f64,             // Tracks highest EMA ROE for trailing stop
     pub atr_24h: f64,                  // Tracks the asset volatility at entry time
+    pub is_momentum_trade: bool,       // Tracks if this trade was forced by Momentum Breakout Engine
 }
 
 impl MockPosition {
@@ -45,6 +54,7 @@ impl MockPosition {
         tier: Option<String>,
         regime: Option<String>,
         atr_24h: f64,
+        is_momentum_trade: bool,
     ) -> Self {
         Self {
             symbol,
@@ -64,6 +74,7 @@ impl MockPosition {
             alert_flag: false,
             peak_ema_roe: 0.0,
             atr_24h,
+            is_momentum_trade,
         }
     }
 

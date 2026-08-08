@@ -26,7 +26,6 @@ use tracing::{info, warn};
 use models::MockPosition;
 use config::AppConfig;
 use rest_api::RestApi;
-use binance_ws::BinanceWs;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -41,7 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("🚀 Starting HyperQ V4.1 (Environment: {})", config.binance.env);
 
     // Initialize Global State
-    let price_map = Arc::new(DashMap::<String, (f64, u64)>::new());
+    let price_map = Arc::new(DashMap::<String, (f64, f64, u64)>::new());
     let position_map = Arc::new(DashMap::<String, MockPosition>::new());
 
     // Initialize REST API
@@ -94,7 +93,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     
                     position_map.insert(sym.to_string(), MockPosition::new(
-                        sym.to_string(), entry, amt, lev, entry_time, None, None, 0.0
+                        sym.to_string(), entry, amt, lev, entry_time, None, None, 0.0, false
                     ));
                 }
             }
@@ -133,7 +132,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // === Binance WS: High Frequency Price Stream ===
     // Enabled for ultra-low latency price tracking.
     let ofi_map = Arc::new(dashmap::DashMap::new());
-    let ws = Arc::new(crate::binance_ws::BinanceWs::new(&config.binance.env, price_map.clone(), ofi_map.clone()));
+    let ws = Arc::new(crate::binance_ws::BinanceWs::new(&config.binance.env, price_map.clone()));
     let ws_clone = ws.clone();
     tokio::spawn(async move {
         ws_clone.start().await;
@@ -184,6 +183,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(async move {
         let force_ws = crate::binance_ws::BinanceWsForceOrder::new(&env_force, liq_map_ws);
         force_ws.start().await;
+    });
+
+    // === Ticker / 24小时行情流 ===
+    let ticker_map: Arc<DashMap<String, crate::models::TickerData>> = Arc::new(DashMap::new());
+    let ticker_map_ws = ticker_map.clone();
+    let env_ticker = config.binance.env.clone();
+    tokio::spawn(async move {
+        let ticker_ws = crate::binance_ws::BinanceWsTicker::new(&env_ticker, ticker_map_ws);
+        ticker_ws.start().await;
     });
 
     // 强平流衰减任务（每分钟衰减20%，避免历史爆仓影响当前决策）
@@ -265,13 +273,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Initialize Executor & Sentinel
-    let penalty_map: Arc<DashMap<String, (f64, u64)>> = Arc::new(DashMap::new());
     
     let executor = Arc::new(crate::executor::Executor::new(
         rest_api.clone(),
         ws_api.clone(),
         position_map.clone(),
         funding_map.clone(),
+        price_map.clone(),
+        cvd_map.clone(),
+        ofi_map.clone(),
         config.executor.clone(),
         config.dry_run,
         config.position.max_leverage,
@@ -284,7 +294,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.sentinel.clone(),
         config.dry_run,
         config.time_stop.clone(),
-        penalty_map.clone(),
     ));
     sentinel.start();
 
@@ -295,7 +304,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let hot_coins_inference = hot_coins.clone();
     let oi_map_inference = oi_map.clone();
     let liq_map_inference = liq_map.clone();
-    let penalty_map_inference = penalty_map.clone();
     let prev_prob_map: Arc<DashMap<String, (f32, f32)>> = Arc::new(DashMap::new());
     let prev_prob_map_inference = prev_prob_map.clone();
     let position_map_inference = position_map.clone();
@@ -317,7 +325,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 hot_coins_inference, 
                 oi_map_inference,
                 liq_map_inference,
-                penalty_map_inference,
                 prev_prob_map_inference,
             ).await;
         });
@@ -327,6 +334,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         rx_signal,
         position_map.clone(),
         executor.clone(),
+        ticker_map.clone(),
         config.position.max_positions,
         config.position.rwa_risk_multiplier,
         config.position.max_leverage as f64,
@@ -334,7 +342,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.prob_threshold.clone(),
         config.defense_mode.clone(),
         config.position.dynamic_sizing.clone(),
-        penalty_map.clone(),
     );
 
     let risk_guard = Arc::new(crate::risk_guard::RiskGuard::new(position_map.clone(), executor.clone(), price_map.clone(), config.risk_guard.clone(), config.asset_tiers.clone(), cvd_map.clone()));

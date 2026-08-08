@@ -2,7 +2,6 @@ use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 use zeromq::{Socket, SocketRecv, SocketSend, ReqSocket};
 use crate::features::FeatureEngine;
-use crate::models::Kline;
 use crate::models_signal::Signal;
 use crate::rest_api::RestApi;
 use uuid::Uuid;
@@ -68,7 +67,6 @@ pub async fn start_inference_loop(
     hot_coins: Arc<tokio::sync::RwLock<Vec<String>>>,
     oi_map: Arc<dashmap::DashMap<String, (f64, f64)>>,
     liq_map: Arc<dashmap::DashMap<String, (f64, f64)>>,
-    _penalty_map: Arc<dashmap::DashMap<String, (f64, u64)>>,
     _prev_prob_map: Arc<dashmap::DashMap<String, (f32, f32)>>,
 ) {
     let engine1 = InferenceEngine::new().ok();
@@ -195,7 +193,31 @@ pub async fn start_inference_loop(
         // 每个推理周期发送最高质量的一个信号
         if let Some(sig) = best_signal {
             tracing::info!("[BEST SIGNAL] {} prob={:.3} is_long={}", sig.symbol, sig.prob, sig.is_long);
-            let _ = tx_signal.send(sig).await;
+            
+            // --- Pin-Bar VETO 防线 ---
+            let mut vetoed = false;
+            // 极速定向抓取：只针对这唯一的待开仓币种，抓取实时 5m K线进行插针验明
+            if let Ok(klines_5m) = rest_api.get_klines(&sig.symbol, "5m", 2).await {
+                if let Some(last_k) = klines_5m.last() {
+                    if sig.is_long {
+                        let drop = (last_k.high - last_k.close) / last_k.close;
+                        if drop > 0.008 {
+                            tracing::warn!("[VETO: Pin-Bar] 🛑 拒绝做多 {} | 实时 5m 回撤幅度: {:.2}% > 0.8% | 规避画门", sig.symbol, drop * 100.0);
+                            vetoed = true;
+                        }
+                    } else {
+                        let bounce = (last_k.close - last_k.low) / last_k.low;
+                        if bounce > 0.008 {
+                            tracing::warn!("[VETO: Pin-Bar] 🛑 拒绝做空 {} | 实时 5m 反弹幅度: {:.2}% > 0.8% | 规避深V", sig.symbol, bounce * 100.0);
+                            vetoed = true;
+                        }
+                    }
+                }
+            }
+            
+            if !vetoed {
+                let _ = tx_signal.send(sig).await;
+            }
         }
         
         tokio::time::sleep(std::time::Duration::from_secs(60)).await;

@@ -5,8 +5,9 @@ use dashmap::DashMap;
 use crate::models::MockPosition;
 use crate::rest_api::RestApi;
 
+#[derive(Debug, Clone)]
 pub enum OrderType {
-    MarketOpen { symbol: String, is_long: bool, qty: f64, expected_price: f64, tier: Option<String>, regime: Option<String>, atr_24h: f64 },
+    MarketOpen { symbol: String, is_long: bool, qty: f64, expected_price: f64, tier: Option<String>, regime: Option<String>, atr_24h: f64, is_momentum_trade: bool },
     MarketClose { symbol: String, qty: f64, expected_price: f64, reason: String },
 }
 
@@ -15,6 +16,9 @@ pub struct Executor {
     pub ws: Arc<crate::ws_api::WsApi>,
     positions: Arc<DashMap<String, MockPosition>>,
     funding_map: Arc<DashMap<String, (f64, u64)>>,
+    price_map: Arc<DashMap<String, (f64, f64, u64)>>,
+    cvd_map: Arc<DashMap<String, f64>>,
+    ofi_map: Arc<DashMap<String, f64>>,
     config: crate::config::ExecutorConfig,
     dry_run: bool,
     leverage: u8,
@@ -26,6 +30,9 @@ impl Executor {
         ws: Arc<crate::ws_api::WsApi>,
         positions: Arc<DashMap<String, MockPosition>>,
         funding_map: Arc<DashMap<String, (f64, u64)>>,
+        price_map: Arc<DashMap<String, (f64, f64, u64)>>,
+        cvd_map: Arc<DashMap<String, f64>>,
+        ofi_map: Arc<DashMap<String, f64>>,
         config: crate::config::ExecutorConfig,
         dry_run: bool,
         leverage: u8,
@@ -35,6 +42,9 @@ impl Executor {
             ws,
             positions,
             funding_map,
+            price_map,
+            cvd_map,
+            ofi_map,
             config,
             dry_run,
             leverage,
@@ -47,8 +57,22 @@ impl Executor {
             return;
         }
 
+        let sym = match &order_type {
+            OrderType::MarketOpen { symbol, .. } => symbol.clone(),
+            OrderType::MarketClose { symbol, .. } => symbol.clone(),
+        };
+        
+        let mut spread_log = 0.0;
+        if let Some(p) = self.price_map.get(&sym) {
+            let bid = p.0;
+            let ask = p.1;
+            if bid > 0.0 { spread_log = (ask - bid) / bid; }
+        }
+        let cvd_log = self.cvd_map.get(&sym).map(|v| *v).unwrap_or(0.0);
+        let ofi_log = self.ofi_map.get(&sym).map(|v| *v).unwrap_or(0.0);
+
         match order_type {
-            OrderType::MarketOpen { symbol, is_long, qty, expected_price, tier, regime, atr_24h } => {
+            OrderType::MarketOpen { symbol, is_long, qty, expected_price, tier, regime, atr_24h, is_momentum_trade } => {
                 let mut is_duplicate = false;
                 if let Some(pos) = self.positions.get(&symbol) {
                     let is_pos_long = pos.position_amt > 0.0;
@@ -78,6 +102,20 @@ impl Executor {
                     }
                 }
                 
+                // Spread Filter (V5.3)
+                if let Some(p) = self.price_map.get(&symbol) {
+                    let bid = p.0;
+                    let ask = p.1;
+                    if bid > 0.0 {
+                        let spread = (ask - bid) / bid;
+                        if spread > 0.0015 { // 0.15% spread limit
+                            warn!("🚫 [REJECT] 点差过高 (Spread Filter): {} (Bid: {}, Ask: {}, Spread: {:.2}%)", 
+                                symbol, bid, ask, spread * 100.0);
+                            return;
+                        }
+                    }
+                }
+                
                 info!("Executing MARKET OPEN for {} (Long: {}): Qty={}, ExpectedPrice={}", symbol, is_long, qty, expected_price);
                 
                 // 1. Set Margin Type to ISOLATED first
@@ -95,7 +133,7 @@ impl Executor {
                 let side = if is_long { "BUY" } else { "SELL" };
                 let is_layer1 = tier.as_deref() == Some("layer1");
                 
-                let mut final_fill_price;
+                let final_fill_price;
                 let mut final_qty = qty;
                 
                 let mut limit_filled_qty = 0.0;
@@ -189,7 +227,10 @@ impl Executor {
                     "qty": final_qty,
                     "expected_price": expected_price,
                     "fill_price": final_fill_price,
-                    "slippage_pct": slippage_pct
+                    "slippage_pct": slippage_pct,
+                    "spread_pct": spread_log * 100.0,
+                    "cvd": cvd_log,
+                    "ofi": ofi_log
                 });
                 
                 if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open("/var/log/hyperq/trades.jsonl") {
@@ -198,7 +239,7 @@ impl Executor {
                 
                 let amt = if is_long { final_qty } else { -final_qty };
                 self.positions.insert(symbol.clone(), crate::models::MockPosition::new(
-                    symbol.clone(), final_fill_price, amt, self.leverage as u8, crate::risk_guard::current_time_ms(), tier, regime, atr_24h
+                    symbol.clone(), final_fill_price, amt, self.leverage as u8, crate::risk_guard::current_time_ms(), tier, regime, atr_24h, is_momentum_trade
                 ));
             }
             OrderType::MarketClose { symbol, qty, expected_price, reason } => {
@@ -288,6 +329,9 @@ impl Executor {
                                 "expected_price": expected_price,
                                 "fill_price": final_fill_price,
                                 "slippage_pct": slippage_pct,
+                                "spread_pct": spread_log * 100.0,
+                                "cvd": cvd_log,
+                                "ofi": ofi_log,
                                 "unrealized_roe": roe,
                                 "max_favorable_excursion": mfe,
                                 "max_adverse_excursion": mae,
@@ -326,6 +370,9 @@ impl Executor {
                         "expected_price": expected_price,
                         "fill_price": limit_avg_price,
                         "slippage_pct": slippage_pct,
+                        "spread_pct": spread_log * 100.0,
+                        "cvd": cvd_log,
+                        "ofi": ofi_log,
                         "unrealized_roe": roe,
                         "max_favorable_excursion": mfe,
                         "max_adverse_excursion": mae,

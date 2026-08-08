@@ -62,7 +62,7 @@ impl Reconciler {
                             self.positions.insert(
                                 sym.to_string(),
                                 crate::models::MockPosition::new(
-                                    sym.to_string(), entry, amt, lev, crate::risk_guard::current_time_ms(), None, None, 0.0
+                                    sym.to_string(), entry, amt, lev, crate::risk_guard::current_time_ms(), None, None, 0.0, false
                                 )
                             );
                         }

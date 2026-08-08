@@ -5,8 +5,7 @@ use dashmap::DashMap;
 use futures::{SinkExt, StreamExt};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use serde_json::{Value, json};
-use tracing::{info, warn, error, debug};
-use std::time::Instant;
+use tracing::{info, warn, error};
 
 use crate::rest_api::RestApi;
 
