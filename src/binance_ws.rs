@@ -27,6 +27,18 @@ struct DepthData {
     asks: Vec<[String; 2]>,
 }
 
+#[derive(Deserialize)]
+struct AggTradeMsg {
+    stream: String,
+    data: AggTradeData,
+}
+
+#[derive(Deserialize)]
+struct AggTradeData {
+    q: String, // Quantity
+    m: bool,   // Is the buyer the market maker? (true = seller initiated/market sell, false = buyer initiated/market buy)
+}
+
 pub struct BinanceWs {
     ws_url: String,
     price_map: Arc<DashMap<String, (f64, u64)>>,
@@ -115,16 +127,17 @@ impl BinanceWs {
 pub struct BinanceWsDepth {
     stream_url: String,
     ofi_map: Arc<DashMap<String, f64>>,
+    cvd_map: Arc<DashMap<String, f64>>,
 }
 
 impl BinanceWsDepth {
-    pub fn new(env: &str, ofi_map: Arc<DashMap<String, f64>>) -> Self {
+    pub fn new(env: &str, ofi_map: Arc<DashMap<String, f64>>, cvd_map: Arc<DashMap<String, f64>>) -> Self {
         let base_url = if env == "mainnet" {
             "wss://fstream.binance.com/stream"
         } else {
             "wss://stream.binancefuture.com/stream"
         };
-        Self { stream_url: base_url.to_string(), ofi_map }
+        Self { stream_url: base_url.to_string(), ofi_map, cvd_map }
     }
 
     pub async fn start(&self, hot_coins: Arc<tokio::sync::RwLock<Vec<String>>>) {
@@ -141,8 +154,12 @@ impl BinanceWsDepth {
                 info!("🔄 L2 WS: Hot coins changed. Updating subscriptions.");
                 current_symbols = latest_symbols.clone();
             }
-            
-            let streams: Vec<String> = current_symbols.iter().map(|s| format!("{}@depth20@100ms", s.to_lowercase())).collect();
+            let streams: Vec<String> = current_symbols.iter().flat_map(|s| {
+                vec![
+                    format!("{}@depth20@100ms", s.to_lowercase()),
+                    format!("{}@aggTrade", s.to_lowercase())
+                ]
+            }).collect();
             let query = streams.join("/");
             let url = format!("{}?streams={}", self.stream_url, query);
             
@@ -160,7 +177,7 @@ impl BinanceWsDepth {
                         match tokio::time::timeout(std::time::Duration::from_secs(15), ws_stream.next()).await {
                             Ok(Some(msg)) => {
                                 if let Ok(Message::Text(text)) = msg {
-                                    self.handle_depth_msg(&text);
+                                    self.handle_msg(&text);
                                 }
                             }
                             Ok(None) => break,
@@ -174,9 +191,11 @@ impl BinanceWsDepth {
         }
     }
 
-    fn handle_depth_msg(&self, text: &str) {
-        if let Ok(msg) = serde_json::from_str::<DepthUpdateMsg>(text) {
-            // Compute OFI: (Bid Vol - Ask Vol) / (Bid Vol + Ask Vol)
+    fn handle_msg(&self, text: &str) {
+        // Fast path check to distinguish messages
+        if text.contains("@depth20@100ms") {
+            if let Ok(msg) = serde_json::from_str::<DepthUpdateMsg>(text) {
+                // Compute OFI: (Bid Vol - Ask Vol) / (Bid Vol + Ask Vol)
             let mut bid_vol = 0.0;
             let mut ask_vol = 0.0;
             
@@ -194,6 +213,22 @@ impl BinanceWsDepth {
                 let sym = msg.stream.split('@').next().unwrap_or("").to_uppercase();
                 if !sym.is_empty() {
                     self.ofi_map.insert(sym, ofi);
+                }
+                }
+            }
+        } else if text.contains("@aggTrade") {
+            if let Ok(msg) = serde_json::from_str::<AggTradeMsg>(text) {
+                let sym = msg.stream.split('@').next().unwrap_or("").to_uppercase();
+                if !sym.is_empty() {
+                    if let Ok(qty) = msg.data.q.parse::<f64>() {
+                        // m = true indicates maker is buyer, meaning this is a market sell (negative CVD)
+                        // m = false indicates maker is seller, meaning this is a market buy (positive CVD)
+                        let delta = if msg.data.m { -qty } else { qty };
+                        
+                        // Decay old CVD slightly and add new delta to keep it a rolling metric
+                        let mut entry = self.cvd_map.entry(sym).or_insert(0.0);
+                        *entry = (*entry * 0.99) + delta; 
+                    }
                 }
             }
         }

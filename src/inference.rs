@@ -18,15 +18,13 @@ impl InferenceEngine {
         })
     }
 
-    pub async fn predict_with_context(&self, symbol: &str, features_4h: Vec<f64>, features_1h: Vec<f64>, features_15m: Vec<f64>, ofi: f64, price_vs_range: f64, change_24h_pct: f64, oi_change_pct: f64, liq_imbalance: f64, taker_buy_ratio: f64, distance_to_high: f64) -> Result<(f32, f32, String), String> {
+    pub async fn predict_with_context(&self, symbol: &str, features_15m: Vec<f64>, ofi: f64, price_vs_range: f64, change_24h_pct: f64, oi_change_pct: f64, liq_imbalance: f64, taker_buy_ratio: f64, distance_to_high: f64) -> Result<(f32, f32, String), String> {
         // 将 ofi 追加到 15m 特征的末尾（因为 15m 是微观特征，跟 orderbook 最相关）
         let mut f_15m = features_15m.clone();
         f_15m.push(ofi);
         
         let req_json = serde_json::json!({
             "symbol": symbol,
-            "features_4h": features_4h,
-            "features_1h": features_1h,
             "features_15m": f_15m,
             "price_vs_range": price_vs_range,
             "change_24h_pct": change_24h_pct,
@@ -101,20 +99,17 @@ pub async fn start_inference_loop(
             if let Some(engine) = engine_opt {
 
                 for sym in symbols {
-                    // 并发请求三个周期的 K 线数据
-                    let f_4h = rest_api.get_klines(&sym, "4h", 200);
-                    let f_1h = rest_api.get_klines(&sym, "1h", 200);
+                    // 刺客模式：仅需请求 15m 级别 K 线，大幅降低网络延迟
                     let f_15m = rest_api.get_klines(&sym, "15m", 200);
                     
-                    match tokio::join!(f_4h, f_1h, f_15m) {
-                        (Ok(klines_4h), Ok(klines_1h), Ok(klines_15m)) => {
-                            if klines_4h.len() >= 50 && klines_1h.len() >= 50 && klines_15m.len() >= 50 {
-                                let ofi = ofi_map.get(&sym).map(|r| *r).unwrap_or(0.0);
-                                
-                                // 宏观计算 (使用 1H 计算过去 24 小时的最高最低价，即过去 24 根)
-                                let (high_24h, low_24h) = klines_1h.iter().rev().take(24).fold((f64::MIN, f64::MAX), |(h, l), k| {
-                                    (h.max(k.high), l.min(k.low))
-                                });
+                    if let Ok(klines_15m) = f_15m.await {
+                        if klines_15m.len() >= 96 {
+                            let ofi = ofi_map.get(&sym).map(|r| *r).unwrap_or(0.0);
+                            
+                            // 宏观计算 (使用 15m 计算过去 24 小时的最高最低价，即过去 96 根 15m K线)
+                            let (high_24h, low_24h) = klines_15m.iter().rev().take(96).fold((f64::MIN, f64::MAX), |(h, l), k| {
+                                (h.max(k.high), l.min(k.low))
+                            });
                                 let last_close = klines_15m.last().map(|k| k.close).unwrap_or(0.0);
                                 let range_24h = high_24h - low_24h;
                                 let price_vs_range = if range_24h > 0.0 { (last_close - low_24h) / range_24h } else { 0.5 };
@@ -140,15 +135,14 @@ pub async fn start_inference_loop(
                                     (high_24h - last_close) / high_24h
                                 } else { 0.0 };
                                 
-                                let features_4h = FeatureEngine::compute_features(&klines_4h);
-                                let features_1h = FeatureEngine::compute_features(&klines_1h);
+                                // 刺客模式：仅计算 15m 动量
                                 let features_15m = FeatureEngine::compute_features(&klines_15m);
                                 
                                 // 注意：我们依然将 15m 的 ATR 传递给后续系统用来算止损线，因为它反映微观波动
                                 let atr = features_15m[16];
 
                                 if let Ok((prob_long, prob_short, regime)) = engine.predict_with_context(
-                                    &sym, features_4h, features_1h, features_15m, 
+                                    &sym, features_15m, 
                                     ofi, price_vs_range, change_24h_pct, oi_change_pct, liq_imbalance, taker_buy_ratio, distance_to_high
                                 ).await {
                                     let is_long = prob_long > prob_short;
@@ -190,11 +184,9 @@ pub async fn start_inference_loop(
                                     }
                                 }
                             }
+                        } else {
+                            tracing::warn!("Failed to fetch klines for {}", sym);
                         }
-                        _ => {
-                            tracing::warn!("Failed to fetch some klines for {}", sym);
-                        }
-                    }
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 }
             }

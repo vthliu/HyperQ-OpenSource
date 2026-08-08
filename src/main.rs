@@ -139,7 +139,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ws_clone.start().await;
     });
 
+    let cvd_map: Arc<DashMap<String, f64>> = Arc::new(DashMap::new());
+
     let ofi_map_depth = ofi_map.clone();
+    let cvd_map_depth = cvd_map.clone();
     let env_clone = config.binance.env.clone();
     
     // === HOT-COIN RADAR ===
@@ -171,7 +174,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let hot_coins_ws = hot_coins.clone();
     let env_force = env_clone.clone();
     tokio::spawn(async move {
-        let depth_ws = crate::binance_ws::BinanceWsDepth::new(&env_clone, ofi_map_depth);
+        let depth_ws = crate::binance_ws::BinanceWsDepth::new(&env_clone, ofi_map_depth, cvd_map_depth);
         depth_ws.start(hot_coins_ws).await;
     });
 
@@ -334,7 +337,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         penalty_map.clone(),
     );
 
-    let risk_guard = Arc::new(crate::risk_guard::RiskGuard::new(position_map.clone(), executor.clone(), price_map.clone(), config.risk_guard.clone(), config.asset_tiers.clone()));
+    let risk_guard = Arc::new(crate::risk_guard::RiskGuard::new(position_map.clone(), executor.clone(), price_map.clone(), config.risk_guard.clone(), config.asset_tiers.clone(), cvd_map.clone()));
     
     // Run Fast RiskGuard Cycle (100ms) for real-time ROE tracking and trailing stop triggers
     let risk_guard_fast = risk_guard.clone();

@@ -13,11 +13,12 @@ pub struct RiskGuard {
     price_map: Arc<DashMap<String, (f64, u64)>>,
     config: crate::config::RiskGuardConfig,
     asset_tiers: crate::config::AssetTiersConfig,
+    cvd_map: Arc<DashMap<String, f64>>,
 }
 
 impl RiskGuard {
-    pub fn new(positions: Arc<DashMap<String, MockPosition>>, executor: Arc<Executor>, price_map: Arc<DashMap<String, (f64, u64)>>, config: crate::config::RiskGuardConfig, asset_tiers: crate::config::AssetTiersConfig) -> Self {
-        Self { positions, executor, price_map, config, asset_tiers }
+    pub fn new(positions: Arc<DashMap<String, MockPosition>>, executor: Arc<Executor>, price_map: Arc<DashMap<String, (f64, u64)>>, config: crate::config::RiskGuardConfig, asset_tiers: crate::config::AssetTiersConfig, cvd_map: Arc<DashMap<String, f64>>) -> Self {
+        Self { positions, executor, price_map, config, asset_tiers, cvd_map }
     }
 
     /// Bug 3 Fix: Fast cycle (every 5s) — ONLY updates price/ROE/MFE/MAE so Sentinel
@@ -45,6 +46,29 @@ impl RiskGuard {
             if roe > pos.max_favorable_excursion { pos.max_favorable_excursion = roe; }
             if roe < pos.max_adverse_excursion   { pos.max_adverse_excursion   = roe; }
             if new_ema_roe > pos.peak_ema_roe    { pos.peak_ema_roe = new_ema_roe; }
+
+            let cvd = self.cvd_map.get(&symbol).map(|v| *v).unwrap_or(0.0);
+            
+            // Phase 0: CVD (L3 AggTrade) 微观预判止损 (Assassin Mode)
+            // 如果浮亏大于 -5%，且微观吃单动量 (CVD) 严重背离，立刻斩仓，不等 -20%
+            if roe < -5.0 {
+                let is_long = pos.position_amt > 0.0;
+                let c_thresh = 150000.0; // 假设 CVD 阈值，需根据实际调参
+                let cvd_fatal = if is_long { cvd < -c_thresh } else { cvd > c_thresh };
+                
+                if cvd_fatal {
+                    warn!("🔥 [ASSASSIN] CVD L3 崩塌预判止损 for {}! ROE={:.2}%, CVD={:.0}", symbol, roe, cvd);
+                    if pos.try_lock_for_close() {
+                        orders_to_execute.push(OrderType::MarketClose {
+                            symbol: symbol.clone(),
+                            qty: pos.position_amt,
+                            expected_price: price,
+                            reason: "Assassin L3 Cut".to_string()
+                        });
+                    }
+                    continue; // Skip other phase checks
+                }
+            }
 
             // Phase 1: 用 MFE（真实最高浮盈）来激活追踪止盈
             // 中长线策略：MFE 必须达到 15% ROE 才激活，避免正常震荡被早早止出

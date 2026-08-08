@@ -34,9 +34,9 @@ min_signal_prob_for_high_funding = 0.98
 
 [time_stop]
 # Maximum holding time before cutting positions that don't trend (hours)
-layer1_max_holding_hours = 2.0
-layer2_max_holding_hours = 1.5
-layer3_max_holding_hours = 1.0
+layer1_max_holding_hours = 0.75
+layer2_max_holding_hours = 0.75
+layer3_max_holding_hours = 0.75
 
 [prob_threshold]
 # The minimum ML probability required to open a position

@@ -32,25 +32,11 @@ class MTFEngine:
             "ofi": float(features[-1]) if len(features) > 47 else 0.0 # ofi is appended
         }
 
-    def predict(self, f_4h, f_1h, f_15m, price_vs_range, change_24h_pct, oi_change_pct, liq_imbalance, taker_buy_ratio, distance_to_high):
-        m_4h = self.extract_metrics(f_4h)
-        m_1h = self.extract_metrics(f_1h)
+    def predict(self, f_15m, price_vs_range, change_24h_pct, oi_change_pct, liq_imbalance, taker_buy_ratio, distance_to_high):
         m_15m = self.extract_metrics(f_15m)
 
         # ========================================================
-        # 1. 宏观底色 (4H 级别) - 决定大势方向
-        # ========================================================
-        macro_bullish = m_4h["rsi"] > 50 and m_4h["macd_hist"] > 0
-        macro_bearish = m_4h["rsi"] < 50 and m_4h["macd_hist"] < 0
-        
-        # ========================================================
-        # 2. 波段确认 (1H 级别) - 决定动能
-        # ========================================================
-        swing_bullish = m_1h["ret"] > 0 and m_1h["rsi"] > 55
-        swing_bearish = m_1h["ret"] < 0 and m_1h["rsi"] < 45
-
-        # ========================================================
-        # 3. 扳机点与微观失衡 (15m 级别) - 寻找精确入场点
+        # 1. 微观扳机点与订单流失衡 (15m 级别) - 寻找精确入场点
         # ========================================================
         micro_ret = m_15m["ret"]
         ofi = m_15m["ofi"]
@@ -81,14 +67,15 @@ class MTFEngine:
             raw_prob_long -= 0.40 # 强行穿透，极大增加看空胜率
             is_override = True
         else:
-            # 正常逻辑：服从 MTF 宏观共振
-            if macro_bullish and swing_bullish:
-                raw_prob_long += 0.30 
-            elif macro_bearish and swing_bearish:
-                raw_prob_long -= 0.30 
+        else:
+            # 刺客法则：单周期极速动能爆发
+            if micro_ret > 0.01 and ofi > 0.3:
+                raw_prob_long += 0.20 # 15m 动能强劲
+            elif micro_ret < -0.01 and ofi < -0.3:
+                raw_prob_long -= 0.20
             else:
                 # 震荡市，极度压制概率
-                raw_prob_long = 0.5 + (raw_prob_long - 0.5) * 0.2
+                raw_prob_long = 0.5 + (raw_prob_long - 0.5) * 0.5
 
         raw_prob_long = max(0.01, min(0.99, raw_prob_long))
         
@@ -144,7 +131,7 @@ def main():
     socket.bind("tcp://127.0.0.1:5556")
     print("🚀 [AI ENGINE V5.0 MTF版] 多周期共振引擎已启动，端口 5556")
     print("   ✅ 核心升级：修复动量取值 Bug，现在能正确发出【做空】信号！")
-    print("   ✅ 核心升级：4H(宏观) + 1H(波段) + 15m(微观) 三维共振过滤")
+    print("   ✅ 核心升级：15m(单周期微观) + OFI失衡 + 极限追踪")
 
     engine = MTFEngine()
 
@@ -154,8 +141,6 @@ def main():
             data = json.loads(message)
             symbol = data.get("symbol", "UNKNOWN")
             
-            f_4h = data.get("features_4h", [])
-            f_1h = data.get("features_1h", [])
             f_15m = data.get("features_15m", [])
             
             price_vs_range = float(data.get("price_vs_range", 0.5))
@@ -166,12 +151,12 @@ def main():
             distance_to_high = float(data.get("distance_to_high", 0.0))
             
             p_long, p_short, regime = engine.predict(
-                f_4h, f_1h, f_15m, 
+                f_15m, 
                 price_vs_range, change_24h_pct, oi_change_pct, liq_imbalance, taker_buy_ratio, distance_to_high
             )
             
             if abs(p_long - p_short) > 0.2:
-                print(f"🎯 [{symbol}] 共振突破! p_long={p_long:.3f} p_short={p_short:.3f} | 24H涨幅={change_24h_pct:.1%} OFI={f_15m[-1] if f_15m else 0:.2f}")
+                print(f"🎯 [{symbol}] 刺客出击! p_long={p_long:.3f} p_short={p_short:.3f} | 24H涨幅={change_24h_pct:.1%} OFI={f_15m[-1] if f_15m else 0:.2f}")
             
             response = {
                 "symbol": symbol,
