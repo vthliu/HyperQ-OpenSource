@@ -122,16 +122,16 @@ impl TrendProcessor {
             let low_24h = ticker.low_24h;
             let current_price = signal.price;
 
-            let is_breaking_high = current_price >= high_24h * 0.995; // Within 0.5% of 24h High
-            let is_breaking_low = current_price <= low_24h * 1.005;   // Within 0.5% of 24h Low
+            let is_breaking_high = current_price >= high_24h * 0.96; // Within 4% of 24h High
+            let is_breaking_low = current_price <= low_24h * 1.04;   // Within 4% of 24h Low
 
-            if pct > 20.0 && !signal.is_long && is_breaking_high {
-                warn!("🚨 [REGIME OVERRIDE] {} is in STRONG_TREND UP (+{:.1}%) and BREAKING HIGH! VETOING AI SHORT. Forcing Momentum LONG!", signal.symbol, pct);
+            if pct > 15.0 && !signal.is_long && is_breaking_high {
+                warn!("🚨 [REGIME OVERRIDE] {} is in STRONG_TREND UP (+{:.1}%) and within 4% of High! VETOING AI SHORT. Forcing Momentum LONG!", signal.symbol, pct);
                 final_prob = 1.0;
                 final_is_long = true;
                 is_momentum = true;
-            } else if pct < -20.0 && signal.is_long && is_breaking_low {
-                warn!("🚨 [REGIME OVERRIDE] {} is in STRONG_TREND DOWN ({:.1}%) and BREAKING LOW! VETOING AI LONG. Forcing Momentum SHORT!", signal.symbol, pct);
+            } else if pct < -15.0 && signal.is_long && is_breaking_low {
+                warn!("🚨 [REGIME OVERRIDE] {} is in STRONG_TREND DOWN ({:.1}%) and within 4% of Low! VETOING AI LONG. Forcing Momentum SHORT!", signal.symbol, pct);
                 final_prob = 1.0;
                 final_is_long = false;
                 is_momentum = true;
@@ -173,9 +173,16 @@ impl TrendProcessor {
                 50.0
             }
         };
-        let mut final_qty = target_notional / signal.price;
+        let mut final_qty = (target_notional / signal.price) * final_prob;
+
+        if let Some(tier) = &signal.tier {
+            if tier == "layer3" {
+                final_qty *= self.rwa_risk_multiplier;
+                info!("Layer 3 Asset detected! Applying RWA risk multiplier. Raw Qty: {}", final_qty);
+            }
+        }
         
-        // Quick heuristics for Binance step sizes
+        // Quick heuristics for Binance step sizes AFTER all math
         if signal.price > 1000.0 {
             final_qty = (final_qty * 1000.0).round() / 1000.0;
         } else if signal.price > 100.0 {
@@ -187,20 +194,10 @@ impl TrendProcessor {
         }
         
         if final_qty <= 0.0 { final_qty = 1.0; }
-        if let Some(tier) = &signal.tier {
-            if tier == "layer3" {
-                final_qty *= self.rwa_risk_multiplier;
-                // Bug 4 fix: ensure qty is still >= 1.0 (Binance minimum) after multiplier
-                final_qty = final_qty.max(1.0);
-                info!("Layer 3 Asset detected! Applying RWA risk multiplier. Qty: {}", final_qty);
-            }
-        }
-        let target_qty = (target_notional / signal.price) * final_prob;
-
         let open_order = OrderType::MarketOpen {
             symbol: signal.symbol.clone(),
             is_long: final_is_long,
-            qty: target_qty,
+            qty: final_qty,
             expected_price: signal.price,
             tier: signal.tier.clone(),
             regime: signal.regime.clone(),
