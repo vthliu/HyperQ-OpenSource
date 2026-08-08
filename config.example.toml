@@ -46,8 +46,8 @@ layer3_min_prob = 0.70
 
 [defense_mode]
 # In defensive mode, leverage and stops can be dynamically reduced
-enabled = true
-leverage_multiplier = 0.5
+enabled = false
+leverage_multiplier = 1.0
 hard_stop_multiplier = 0.8
 
 [position]
