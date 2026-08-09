@@ -103,5 +103,8 @@ fn parse_signal(text: &str) -> Option<Signal> {
         tier,
         is_new_symbol,
         regime,
+        distance_to_high: 0.0,
+        distance_to_low: 0.0,
+        ofi: 0.0,
     })
 }

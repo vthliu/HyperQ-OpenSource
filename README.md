@@ -6,10 +6,10 @@ HyperQ is a high-frequency, institutional-grade execution engine for cryptocurre
 
 ## 🚀 Key Features
 
-- **0.1s Real-time Trailing Stop & L3 CVD Risk Guard (V5.2)**: The `RiskGuard V2` module in Rust iterates through memory-mapped WebSocket data every 100 milliseconds, ensuring profits are locked in instantly. It also uses L3 `@aggTrade` CVD (Cumulative Volume Delta) to detect whale dumping, triggering preemptive stop-loss instantly.
-- **-5% ROE Preemptive CVD Cut & -20% Hard Stop**: The `Sentinel` thread acts as a circuit breaker, clamping maximum losses dynamically. If ROE hits -5% and CVD shows extreme divergence, it cuts instantly. A -20% mathematical boundary remains as the absolute hard stop.
+- **V7.0 Triple-Confluence Momentum FLIP Engine**: During micro 5m breakouts that confirm macro 24h trend reversals with Order Flow Imbalance (OFI), the Rust CTA engine overrides the AI's mean-reversion signals and dynamically flips to momentum trend-following trades. It passes over fakeouts to retain the AI's high win-rate mean-reversion chops.
+- **0.1s Real-time Trailing Stop & L3 CVD Risk Guard**: The `RiskGuard V7.0` module in Rust iterates through memory-mapped WebSocket data every 100 milliseconds, ensuring profits are locked in instantly. It also uses L3 `@aggTrade` CVD (Cumulative Volume Delta) to detect whale dumping, triggering preemptive stop-loss instantly.
+- **-12% Zero-Slippage Hard Stop Execution**: Upgraded in V6.2, all stop-loss orders are executed as instantaneous `cancel_all_orders` and `MARKET_CLOSE` to rigidly cap massive black-swan drawdowns, fully eliminating Maker-order slippage blind spots.
 - **Pure 15m Momentum (Zero Network IO)**: Upgraded to 'Assassin Mode', the Python AI inference server analyzes pure 15m order flow (OFI) momentum, completely eliminating 4H/1H REST API network delay.
-- **Nuclear Momentum Override**: In cases of extreme liquidations or massive whale activity, the system ignores macro trends and overrides standard rules to capture V-shaped reversals.
 
 ## 🛠️ Architecture
 
@@ -43,10 +43,10 @@ HyperQ 是一套专为加密货币永续合约打造的工业级量化执行引�
 
 ## 🚀 核心卖点
 
-- **0.1秒极速追踪止盈 & L3 CVD 风控 (V5.2)**：底层的 `RiskGuard V2` 模块每 100 毫秒扫描一次内存中的 WebSocket 订单流。结合 L3 `@aggTrade` 的真实买卖差 (CVD)，一旦发现主力砸盘，瞬间市价抢跑逃命。
-- **-5% CVD 预判斩仓 & -20% 铁血防线**：哨兵微线程作为物理级熔断器。当浮亏达 -5% 且 CVD 出现断崖式背离时，直接无情斩仓；而 -20% 则是无论如何也会触发的最终数学熔断边界。
-- **纯 15m 极速动能 (零网络 IO 延迟)**：升级为“刺客模式”，砍掉 4H/1H 大周期 REST API 请求，Python 端专注于纯粹的 15m 微观订单流失衡 (OFI) 爆发，实现毫秒级“零等待”信号生成。
-- **动能穿透特权 (Nuclear Override)**：在全网爆仓踩踏或巨鲸暴力扫盘时，系统会无视宏观趋势，发动特权级买入，捕捉深V反转。
+- **V7.0 三重共振动能翻转引擎 (FLIP)**：在发生“微观爆发 + 宏观破位 + 盘口验证”的三重共振时，Rust CTA 动能推土机会强行接管 AI 的均值回归摸顶信号，翻转为顺势的动能追击单，死死咬住单边大趋势。同时放行假突破洗盘，保留 AI 的抄底高胜率。
+- **0.1秒极速追踪止盈 & L3 CVD 风控**：底层的 `RiskGuard V7.0` 模块每 100 毫秒扫描一次内存中的 WebSocket 订单流。结合 L3 `@aggTrade` 的真实买卖差 (CVD)，一旦发现主力砸盘，瞬间市价抢跑逃命。
+- **-12% 零滑点市价断头台 (V6.2)**：彻底重构的物理级风控。一旦触发止损，系统瞬间执行撤单并以市价（Market Order）强平，刚性切断黑天鹅级别的暴跌亏损，完全消除了旧版限价单死等的风控盲区。
+- **纯 15m 极速动能 (零网络 IO 延迟)**：升级为“刺客模式”，砍掉大周期 REST API 请求，Python 端专注于纯粹的 15m 微观订单流失衡 (OFI) 爆发，实现毫秒级“零等待”信号生成。
 
 ## ⚠️ 知识产权与防 Alpha 衰减声明
 

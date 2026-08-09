@@ -26,3 +26,4 @@ backtest_logs.txt
 # OS Generated
 .DS_Store
 deploy_aws.sh
+hyperq_rs_unified_architecture.md

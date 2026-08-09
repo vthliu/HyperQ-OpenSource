@@ -13,4 +13,7 @@ pub struct Signal {
     pub tier: Option<String>,
     pub is_new_symbol: Option<bool>,
     pub regime: Option<String>,
+    pub distance_to_high: f64,
+    pub distance_to_low: f64,
+    pub ofi: f64,
 }

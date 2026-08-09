@@ -114,8 +114,13 @@ impl TrendProcessor {
         let mut final_prob = signal.prob;
         let mut final_is_long = signal.is_long;
         let mut is_momentum = false;
+        
+        if signal.tier.as_deref() == Some("momentum") {
+            is_momentum = true;
+            warn!("🚀 [MOMENTUM EXECUTOR] 收到 100% 确定性趋势翻转信号 {}! 强行追击!", signal.symbol);
+        }
 
-        // --- Regime Classifier & Momentum Override ---
+        // --- Regime Classifier & Momentum Override (Fallback for standard signals) ---
         if let Some(ticker) = self.ticker_map.get(&signal.symbol) {
             let pct = ticker.price_change_pct;
             let high_24h = ticker.high_24h;
@@ -125,12 +130,12 @@ impl TrendProcessor {
             let is_breaking_high = current_price >= high_24h * 0.96; // Within 4% of 24h High
             let is_breaking_low = current_price <= low_24h * 1.04;   // Within 4% of 24h Low
 
-            if pct > 15.0 && !signal.is_long && is_breaking_high {
+            if pct > 15.0 && !signal.is_long && is_breaking_high && !is_momentum {
                 warn!("🚨 [REGIME OVERRIDE] {} is in STRONG_TREND UP (+{:.1}%) and within 4% of High! VETOING AI SHORT. Forcing Momentum LONG!", signal.symbol, pct);
                 final_prob = 1.0;
                 final_is_long = true;
                 is_momentum = true;
-            } else if pct < -15.0 && signal.is_long && is_breaking_low {
+            } else if pct < -15.0 && signal.is_long && is_breaking_low && !is_momentum {
                 warn!("🚨 [REGIME OVERRIDE] {} is in STRONG_TREND DOWN ({:.1}%) and within 4% of Low! VETOING AI LONG. Forcing Momentum SHORT!", signal.symbol, pct);
                 final_prob = 1.0;
                 final_is_long = false;

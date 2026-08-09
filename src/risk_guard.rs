@@ -30,10 +30,23 @@ impl RiskGuard {
             let symbol = entry.key().clone();
             let pos = entry.value_mut();
 
+            let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+            
             let price = if let Some(p) = self.price_map.get(&symbol) {
-                (p.0 + p.1) / 2.0
+                if now_ms > p.2 && (now_ms - p.2) > 5000 {
+                    // WS stale > 5 seconds, fallback to REST
+                    if let Ok((bid, ask)) = self.executor.api.get_book_ticker(&symbol).await {
+                        let pr = (bid + ask) / 2.0;
+                        tracing::warn!("📡 [RADAR] WS 行情延迟 > 5秒 ({}ms)! 强制切换 REST API 抓取 {} 最新价格: {}", now_ms - p.2, symbol, pr);
+                        pr
+                    } else {
+                        (p.0 + p.1) / 2.0
+                    }
+                } else {
+                    (p.0 + p.1) / 2.0
+                }
             } else {
-                continue; // No price yet — skip rather than using stale entry_price
+                continue; // No price yet
             };
 
             let side_mult = if pos.position_amt > 0.0 { 1.0 } else { -1.0 };

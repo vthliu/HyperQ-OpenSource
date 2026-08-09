@@ -326,7 +326,8 @@ impl BinanceWsForceOrder {
 #[derive(Deserialize, Debug)]
 pub struct TickerMsg {
     pub s: String,
-    pub P: String, // Price change percent
+    #[serde(rename = "P")]
+    pub p: String, // Price change percent
     pub h: String, // High price 24h
     pub l: String, // Low price 24h
     pub v: String, // Volume 24h
@@ -360,7 +361,7 @@ impl BinanceWsTicker {
                                     if let Ok(tickers) = serde_json::from_str::<Vec<TickerMsg>>(&text) {
                                         for t in tickers {
                                             if let (Ok(pct), Ok(high), Ok(low), Ok(vol)) = (
-                                                t.P.parse::<f64>(),
+                                                t.p.parse::<f64>(),
                                                 t.h.parse::<f64>(),
                                                 t.l.parse::<f64>(),
                                                 t.v.parse::<f64>(),

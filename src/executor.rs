@@ -263,12 +263,17 @@ impl Executor {
                     entry_time = pos.entry_time;
                     entry_price = pos.entry_price;
                 }
-                
+                let is_hard_stop = reason.contains("Hard Stop Loss");
                 let mut limit_filled_qty = 0.0;
                 let mut limit_avg_price = 0.0;
                 let mut remaining_qty = abs_qty;
                 
-                // Try MAKER LIMIT order first for closing
+                // 强制清理所有挂单，防止占用 ReduceOnly 额度导致平仓失败
+                info!("🧹 [CLOSE PREP] Canceling all pending orders for {} to release ReduceOnly quota", symbol);
+                let _ = self.api.cancel_all_orders(&symbol).await;
+                
+                // Try MAKER LIMIT order first for closing, ONLY if it's not a Hard Stop
+                if !is_hard_stop {
                 if let Ok((bid, ask)) = self.api.get_book_ticker(&symbol).await {
                     let spread_pct = (ask - bid) / bid * 100.0;
                     // To close a LONG, we SELL, so we place limit at ASK. To close a SHORT, we BUY, so we place at BID.
@@ -297,6 +302,7 @@ impl Executor {
                             }
                         }
                     }
+                }
                 }
                 
                 // Fallback / Completion with MARKET (must use ReduceOnly to avoid reversing position if local state is stale)

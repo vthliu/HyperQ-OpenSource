@@ -133,6 +133,10 @@ pub async fn start_inference_loop(
                                     (high_24h - last_close) / high_24h
                                 } else { 0.0 };
                                 
+                                let distance_to_low = if low_24h > 0.0 {
+                                    (last_close - low_24h) / low_24h
+                                } else { 0.0 };
+                                
                                 // 刺客模式：仅计算 15m 动量
                                 let features_15m = FeatureEngine::compute_features(&klines_15m);
                                 
@@ -165,6 +169,9 @@ pub async fn start_inference_loop(
                                         tier: Some(tier_name.to_string()),
                                         is_new_symbol: None,
                                         regime: Some(regime),
+                                        distance_to_high,
+                                        distance_to_low,
+                                        ofi,
                                     };
 
                                     // 如果当前币种已经有持仓，直接发送信号进行持续的趋势监控（用于反转平仓）
@@ -194,29 +201,61 @@ pub async fn start_inference_loop(
         if let Some(sig) = best_signal {
             tracing::info!("[BEST SIGNAL] {} prob={:.3} is_long={}", sig.symbol, sig.prob, sig.is_long);
             
-            // --- Pin-Bar VETO 防线 ---
+            // --- Surge/Crash & Pin-Bar FLIP/VETO 防线 ---
             let mut vetoed = false;
-            // 极速定向抓取：只针对这唯一的待开仓币种，抓取实时 5m K线进行插针验明
-            if let Ok(klines_5m) = rest_api.get_klines(&sig.symbol, "5m", 2).await {
-                if let Some(last_k) = klines_5m.last() {
-                    if sig.is_long {
-                        let drop = (last_k.high - last_k.close) / last_k.close;
-                        if drop > 0.008 {
-                            tracing::warn!("[VETO: Pin-Bar] 🛑 拒绝做多 {} | 实时 5m 回撤幅度: {:.2}% > 0.8% | 规避画门", sig.symbol, drop * 100.0);
-                            vetoed = true;
-                        }
-                    } else {
-                        let bounce = (last_k.close - last_k.low) / last_k.low;
-                        if bounce > 0.008 {
-                            tracing::warn!("[VETO: Pin-Bar] 🛑 拒绝做空 {} | 实时 5m 反弹幅度: {:.2}% > 0.8% | 规避深V", sig.symbol, bounce * 100.0);
-                            vetoed = true;
+            let mut final_sig = sig.clone();
+            
+            // 极速定向抓取：只针对这唯一的待开仓币种，抓取实时 5m K线进行插针和实体涨幅验明
+            match rest_api.get_klines(&sig.symbol, "5m", 2).await {
+                Ok(klines_5m) => {
+                    if let Some(last_k) = klines_5m.last() {
+                        let body_change = (last_k.close - last_k.open) / last_k.open;
+                        
+                        if sig.is_long {
+                            let drop = (last_k.high - last_k.close) / last_k.close;
+                            if drop > 0.008 {
+                                tracing::warn!("[VETO: Pin-Bar] 🛑 拒绝做多 {} | 实时 5m 回撤幅度: {:.2}% > 0.8% | 规避画门", sig.symbol, drop * 100.0);
+                                vetoed = true;
+                            }
+                            if body_change < -0.015 { // 微观爆发：暴跌飞刀
+                                if sig.distance_to_low < 0.02 && sig.ofi < 0.0 {
+                                    // 宏观破前低 + 盘口卖压压制 = 100% 疯熊主跌浪！
+                                    tracing::warn!("🚀 [CRASH FLIP] {} 100%空头趋势确立 (跌幅{:.2}%, 破前低, OFI={:.2})! 翻转做多为追空!", sig.symbol, body_change * 100.0, sig.ofi);
+                                    final_sig.is_long = false; // 反转为做空
+                                    final_sig.prob = 0.99;
+                                    final_sig.tier = Some("momentum".to_string());
+                                } else {
+                                    tracing::info!("✅ [PASS: Fakeout] 允许做多 {} | 实体跌幅过大，但未破前低或OFI不支持，判定为震荡市洗盘，放行抄底神单！", sig.symbol);
+                                }
+                            }
+                        } else {
+                            let bounce = (last_k.close - last_k.low) / last_k.low;
+                            if bounce > 0.008 {
+                                tracing::warn!("[VETO: Pin-Bar] 🛑 拒绝做空 {} | 实时 5m 反弹幅度: {:.2}% > 0.8% | 规避深V", sig.symbol, bounce * 100.0);
+                                vetoed = true;
+                            }
+                            if body_change > 0.015 { // 微观爆发：推土机暴拉
+                                if sig.distance_to_high < 0.02 && sig.ofi > 0.0 {
+                                    // 宏观破前高 + 盘口买压绝对压制 = 100% 疯牛主升浪！
+                                    tracing::warn!("🚀 [SURGE FLIP] {} 100%多头趋势确立 (涨幅{:.2}%, 破前高, OFI={:.2})! 翻转做空为追多!", sig.symbol, body_change * 100.0, sig.ofi);
+                                    final_sig.is_long = true; // 反转为做多
+                                    final_sig.prob = 0.99;
+                                    final_sig.tier = Some("momentum".to_string());
+                                } else {
+                                    tracing::info!("✅ [PASS: Fakeout] 允许做空 {} | 实体涨幅过大，但未破前高或OFI不支持，判定为震荡市诱多，放行摸顶神单！", sig.symbol);
+                                }
+                            }
                         }
                     }
+                }
+                Err(e) => {
+                    tracing::error!("🚨 [VETO: Network] 获取 {} K线失败: {} | 触发安全降级，拒绝开仓", sig.symbol, e);
+                    vetoed = true; // 宁可错过，不在盲区开仓
                 }
             }
             
             if !vetoed {
-                let _ = tx_signal.send(sig).await;
+                let _ = tx_signal.send(final_sig).await;
             }
         }
         
