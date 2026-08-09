@@ -27,3 +27,4 @@ backtest_logs.txt
 .DS_Store
 deploy_aws.sh
 hyperq_rs_unified_architecture.md
+ml_engine/
